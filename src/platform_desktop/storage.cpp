@@ -3,6 +3,7 @@
 #include "core/fx_dsp.h"
 #include "config.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstring>
 #include <dirent.h>

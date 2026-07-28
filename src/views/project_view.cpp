@@ -1,4 +1,5 @@
 #include "project_view.h"
+#include "platform/audio.h"
 #include "platform/storage.h"
 #include "platform/input.h"
 #include "platform/led.h"
@@ -71,6 +72,7 @@ void ProjectView::update(InputEvent event) {
     if (_deleting) {
         switch (event) {
             case INPUT_ENTER:
+                Audio::stopAll();
                 Storage::deleteProject(_cursor);
                 _slotExists[_cursor] = false;
                 _deleting = false;
@@ -220,6 +222,7 @@ void ProjectView::update(InputEvent event) {
 }
 
 void ProjectView::doSwitch() {
+    Audio::stopAll();
     if (_slotExists[_cursor]) {
         if (Storage::loadProject(_project, _cursor)) {
             _currentSlot = _cursor;

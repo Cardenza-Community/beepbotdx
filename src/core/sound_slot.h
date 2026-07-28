@@ -21,5 +21,9 @@ bool allocate(SoundSlot& slot, uint32_t maxLength);
 bool shrinkToFit(SoundSlot& slot);
 void free(SoundSlot& slot);
 void setName(SoundSlot& slot, const char* name);
+uint32_t capacityBytes();
+uint32_t usedBytes();
+uint32_t freeBytes();
+uint32_t availableSamples(const SoundSlot* replacing = nullptr);
 
 }

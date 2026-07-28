@@ -4,8 +4,10 @@
 #define SAMPLE_RATE 16000
 #ifdef DESKTOP_BUILD
 #define MAX_SAMPLE_LENGTH 160000  // 10.0s at 16kHz
+#define SAMPLE_ARENA_BYTES (8 * 1024 * 1024)
 #else
 #define MAX_SAMPLE_LENGTH 32000   // 2.0s at 16kHz
+#define SAMPLE_ARENA_BYTES (112 * 1024)  // Shared pool; leaves runtime heap headroom
 #endif
 #define NUM_VOICES 8
 #define SPEAKER_VOLUME 200

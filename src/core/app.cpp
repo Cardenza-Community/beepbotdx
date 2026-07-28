@@ -1,5 +1,6 @@
 #include "app.h"
 #include "platform/storage.h"
+#include "platform/audio.h"
 #include "platform/led.h"
 #include <cstdio>
 #include <cstring>
@@ -25,6 +26,7 @@ void App::init(AppCallbacks callbacks) {
 }
 
 void App::loadSlot(uint8_t slot) {
+    Audio::stopAll();
     _currentProjectSlot = slot;
     Storage::loadProject(_project, slot);
     _project.dirty = false;
@@ -39,6 +41,7 @@ void App::loadSlot(uint8_t slot) {
 }
 
 void App::openProjectList(uint8_t slot) {
+    Audio::stopAll();
     _currentProjectSlot = slot;
     Storage::loadProject(_project, slot);
     _project.dirty = false;

@@ -34,7 +34,8 @@ SoundView::SoundView(Project& project, Character& character)
     , _statusTime(0)
     , _trimStart(0)
     , _trimEnd(0)
-    , _trimMovingEnd(false) {
+    , _trimMovingEnd(false)
+    , _recordMaxLength(0) {
     _statusMsg[0] = '\0';
     SoundSlotOps::init(_previewSlot);
     _flashSlot = 0xFF;
@@ -61,6 +62,7 @@ void SoundView::update(InputEvent event) {
 
     if (_confirmingDelete) {
         if (event == INPUT_ENTER) {
+            Audio::stopAll();
             SoundSlotOps::free(_project.sounds[_cursor]);
             _project.dirty = true;
             _character.setState(CHAR_CRYING);
@@ -108,6 +110,7 @@ void SoundView::exit() {
     if (_subState == STATE_RECORDING) {
         stopRecording();
     }
+    Audio::stopAll();
     SoundSlotOps::free(_previewSlot);
 }
 
@@ -155,6 +158,7 @@ void SoundView::updateList(InputEvent event) {
                 if (GlobalSettings::instance && GlobalSettings::instance->confirmDelete) {
                     _confirmingDelete = true;
                 } else {
+                    Audio::stopAll();
                     SoundSlotOps::free(_project.sounds[_cursor]);
                     _project.dirty = true;
                     _character.setState(CHAR_SUCCESS);
@@ -399,6 +403,7 @@ void SoundView::updateLoadBrowser(InputEvent event) {
             if (_fileCursor < _wavFileCount - 1) _fileCursor++;
             break;
         case INPUT_ENTER: {
+            Audio::stopAll();
             SoundSlotOps::free(_previewSlot);
             char path[64];
             snprintf(path, sizeof(path), "/beepbotdx/samples/%s", _wavFiles[_fileCursor]);
@@ -419,6 +424,7 @@ void SoundView::updateLoadBrowser(InputEvent event) {
         case INPUT_SPACE: {
             char path[64];
             snprintf(path, sizeof(path), "/beepbotdx/samples/%s", _wavFiles[_fileCursor]);
+            Audio::stopAll();
             SoundSlotOps::free(_previewSlot);
             if (Storage::loadWav(_previewSlot, path)) {
                 Audio::triggerSound(_previewSlot.samples, _previewSlot.length, _previewSlot.sampleRate);
@@ -427,6 +433,7 @@ void SoundView::updateLoadBrowser(InputEvent event) {
             break;
         }
         case INPUT_ESC:
+            Audio::stopAll();
             SoundSlotOps::free(_previewSlot);
             _subState = STATE_RECORD_READY;
             _character.setState(CHAR_IDLE);
@@ -602,7 +609,7 @@ void SoundView::drawRecording(Canvas& canvas, const Theme& theme) {
     uint32_t recorded = Audio::getRecordedLength();
     uint8_t level = computeAudioLevel(slot.samples, recorded);
 
-    float progress = (float)recorded / _recordMaxLength;
+    float progress = _recordMaxLength > 0 ? (float)recorded / _recordMaxLength : 0.0f;
     if (progress > 1.0f) progress = 1.0f;
 
     if (level > 10) {
@@ -1010,18 +1017,11 @@ void SoundView::drawWaveform(Canvas& canvas, const Theme& theme, int x, int y, i
 
 void SoundView::startRecording() {
     SoundSlot& slot = _project.sounds[_cursor];
-    uint32_t available = Memory::getFree();
-    uint32_t maxSamples = available > 4000 ? (available - 4000) / sizeof(int16_t) : 0;
-    if (maxSamples < SAMPLE_RATE / 10) {
-        _character.setState(CHAR_DEAD);
-        _character.say("no memory!");
-        snprintf(_statusMsg, sizeof(_statusMsg), "NO MEMORY");
-        _statusTime = millis();
-        return;
-    }
-    if (maxSamples > MAX_SAMPLE_LENGTH) maxSamples = MAX_SAMPLE_LENGTH;
-    _recordMaxLength = maxSamples;
-    if (!SoundSlotOps::allocate(slot, _recordMaxLength)) {
+    Audio::stopAll();
+    _recordMaxLength = SoundSlotOps::availableSamples(&slot);
+    if (_recordMaxLength > MAX_SAMPLE_LENGTH) _recordMaxLength = MAX_SAMPLE_LENGTH;
+    if (_recordMaxLength < SAMPLE_RATE / 10 ||
+        !SoundSlotOps::allocate(slot, _recordMaxLength)) {
         _character.setState(CHAR_DEAD);
         _character.say("no memory!");
         snprintf(_statusMsg, sizeof(_statusMsg), "NO MEMORY");
@@ -1065,6 +1065,7 @@ void SoundView::stopRecording() {
 
 void SoundView::applyTrim() {
     SoundSlot& slot = _project.sounds[_cursor];
+    Audio::stopAll();
     uint32_t newLen = _trimEnd - _trimStart;
 
     if (_trimStart > 0 && newLen > 0) {
@@ -1096,4 +1097,3 @@ void SoundView::triggerSlot(uint8_t index) {
     _flashSlot = index;
     _flashTime = millis();
 }
-
