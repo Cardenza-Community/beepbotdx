@@ -17,6 +17,10 @@ ArenaAllocation allocations[MAX_ARENA_ALLOCATIONS] = {};
 uint8_t allocationCount = 0;
 uint32_t arenaUsed = 0;
 
+uint32_t alignedBytes(uint32_t bytes) {
+    return (bytes + alignof(int16_t) - 1) & ~(alignof(int16_t) - 1);
+}
+
 int findAllocation(const SoundSlot& slot) {
     for (uint8_t i = 0; i < allocationCount; i++) {
         if (allocations[i].owner == &slot) return i;
@@ -65,14 +69,15 @@ void SoundSlotOps::init(SoundSlot& slot) {
     slot.length = 0;
     slot.allocLength = 0;
     slot.sampleRate = SAMPLE_RATE;
+    slot.bitDepth = BIT_DEPTH_16;
     slot.name[0] = '\0';
     slot.level = 100;
     slot.occupied = false;
     SlotFxOps::defaults(slot.fx);
 }
 
-bool SoundSlotOps::allocate(SoundSlot& slot, uint32_t maxLength) {
-    uint32_t bytes = maxLength * sizeof(int16_t);
+bool SoundSlotOps::allocate(SoundSlot& slot, uint32_t maxLength, BitDepth bitDepth) {
+    uint32_t bytes = alignedBytes(maxLength * bytesPerSample(bitDepth));
     int existing = findAllocation(slot);
     uint32_t reclaimable = existing >= 0 ? allocations[existing].size : 0;
     if (bytes == 0 || bytes > SAMPLE_ARENA_BYTES - arenaUsed + reclaimable) {
@@ -96,6 +101,7 @@ bool SoundSlotOps::allocate(SoundSlot& slot, uint32_t maxLength) {
     slot.length = 0;
     slot.allocLength = maxLength;
     slot.sampleRate = SAMPLE_RATE;
+    slot.bitDepth = bitDepth;
     slot.level = 100;
     slot.occupied = false;
     SlotFxOps::defaults(slot.fx);
@@ -105,7 +111,8 @@ bool SoundSlotOps::allocate(SoundSlot& slot, uint32_t maxLength) {
 bool SoundSlotOps::shrinkToFit(SoundSlot& slot) {
     if (!slot.samples || slot.length == 0) return false;
 
-    uint32_t bytes = slot.length * sizeof(int16_t);
+    uint32_t bytes = alignedBytes(
+        slot.length * bytesPerSample(slot.bitDepth));
     int index = findAllocation(slot);
     if (index < 0 || bytes > allocations[index].size) return false;
 
@@ -131,7 +138,7 @@ bool SoundSlotOps::shrinkToFit(SoundSlot& slot) {
 
 void SoundSlotOps::free(SoundSlot& slot) {
     if (findAllocation(slot) >= 0) {
-        Memory::trackFree(slot.allocLength * sizeof(int16_t));
+        Memory::trackFree(allocatedBytes(slot));
     }
     releaseAllocation(slot);
     slot.samples = nullptr;
@@ -143,6 +150,29 @@ void SoundSlotOps::free(SoundSlot& slot) {
 void SoundSlotOps::setName(SoundSlot& slot, const char* name) {
     strncpy(slot.name, name, 8);
     slot.name[8] = '\0';
+}
+
+uint8_t SoundSlotOps::bytesPerSample(BitDepth bitDepth) {
+    return bitDepth == BIT_DEPTH_8 ? 1 : 2;
+}
+
+uint32_t SoundSlotOps::allocatedBytes(const SoundSlot& slot) {
+    return slot.allocLength * bytesPerSample(slot.bitDepth);
+}
+
+int16_t SoundSlotOps::getSample(const SoundSlot& slot, uint32_t index) {
+    if (slot.bitDepth == BIT_DEPTH_8) {
+        return (int16_t)((const int8_t*)slot.samples)[index] << 8;
+    }
+    return slot.samples[index];
+}
+
+void SoundSlotOps::setSample(SoundSlot& slot, uint32_t index, int16_t sample) {
+    if (slot.bitDepth == BIT_DEPTH_8) {
+        ((int8_t*)slot.samples)[index] = (int8_t)(sample >> 8);
+    } else {
+        slot.samples[index] = sample;
+    }
 }
 
 uint32_t SoundSlotOps::capacityBytes() {
@@ -157,11 +187,11 @@ uint32_t SoundSlotOps::freeBytes() {
     return SAMPLE_ARENA_BYTES - arenaUsed;
 }
 
-uint32_t SoundSlotOps::availableSamples(const SoundSlot* replacing) {
+uint32_t SoundSlotOps::availableSamples(BitDepth bitDepth, const SoundSlot* replacing) {
     uint32_t bytes = freeBytes();
     if (replacing) {
         int index = findAllocation(*replacing);
         if (index >= 0) bytes += allocations[index].size;
     }
-    return bytes / sizeof(int16_t);
+    return bytes / bytesPerSample(bitDepth);
 }

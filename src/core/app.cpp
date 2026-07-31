@@ -92,7 +92,7 @@ void App::onTrigger(uint8_t soundIndex) {
     App* app = _instance;
     if (soundIndex < NUM_SOUNDS && app->_project.sounds[soundIndex].occupied) {
         SoundSlot& slot = app->_project.sounds[soundIndex];
-        Audio::triggerSound(slot.samples, slot.length, slot.sampleRate, slot.level * 255 / 100, &slot.fx);
+        Audio::triggerSound(slot, slot.level * 255 / 100, &slot.fx);
     }
     app->_stepTriggerCount++;
     if (app->_stepTriggerCount >= 8) {
@@ -103,6 +103,7 @@ void App::onTrigger(uint8_t soundIndex) {
 
 void App::tick() {
     _character.tick();
+    Audio::update();
 
     if (!_lowBattery && Power::getBatteryPercent() <= 10) {
         _lowBattery = true;

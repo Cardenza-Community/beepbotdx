@@ -7,9 +7,7 @@
 #include <cstdlib>
 
 struct Voice {
-    const int16_t* samples;
-    uint32_t length;
-    uint32_t sampleRate;
+    SoundSlot slot;
     uint8_t volume;
     bool active;
     SlotFx fx;
@@ -23,7 +21,8 @@ static uint8_t _volume = SPEAKER_VOLUME;
 static SDL_AudioDeviceID _playDev = 0;
 static int _playDevRate = SAMPLE_RATE;
 
-static int16_t* _recBuffer = nullptr;
+static void* _recBuffer = nullptr;
+static BitDepth _recBitDepth = BIT_DEPTH_16;
 static uint32_t _recMaxLength = 0;
 static uint32_t _recOffset = 0;
 static bool _recording = false;
@@ -41,7 +40,7 @@ static void audioCallback(void* userdata, Uint8* stream, int len) {
         for (int v = 0; v < NUM_VOICES; v++) {
             if (!_voices[v].active) continue;
 
-            double step = (double)_voices[v].sampleRate / _playDevRate;
+            double step = (double)_voices[v].slot.sampleRate / _playDevRate;
             if (_voices[v].fx.enabled[FX_PITCH]) {
                 step *= FxDsp::pitchRate(_voices[v].fx.value[FX_PITCH]);
             }
@@ -49,20 +48,21 @@ static void audioCallback(void* userdata, Uint8* stream, int len) {
             uint32_t idx = (uint32_t)_voices[v].fracPos;
             double frac = _voices[v].fracPos - idx;
             int16_t s;
-            if (idx + 1 < _voices[v].length) {
-                s = (int16_t)(_voices[v].samples[idx] * (1.0 - frac) +
-                              _voices[v].samples[idx + 1] * frac);
+            if (idx + 1 < _voices[v].slot.length) {
+                int16_t first = SoundSlotOps::getSample(_voices[v].slot, idx);
+                int16_t second = SoundSlotOps::getSample(_voices[v].slot, idx + 1);
+                s = (int16_t)(first * (1.0 - frac) + second * frac);
             } else {
-                s = _voices[v].samples[idx];
+                s = SoundSlotOps::getSample(_voices[v].slot, idx);
             }
 
             s = FxDsp::processSample(s, _voices[v].fx.value,
                                      _voices[v].fx.enabled, _voices[v].filterState,
-                                     (float)_voices[v].sampleRate);
+                                     (float)_voices[v].slot.sampleRate);
 
             mix += (s * _voices[v].volume) / 255;
             _voices[v].fracPos += step;
-            if ((uint32_t)_voices[v].fracPos >= _voices[v].length) {
+            if ((uint32_t)_voices[v].fracPos >= _voices[v].slot.length) {
                 _voices[v].active = false;
             }
         }
@@ -89,12 +89,17 @@ void Audio::init() {
     if (_playDev) SDL_PauseAudioDevice(_playDev, 0);
 }
 
-void Audio::recordStart(int16_t* buffer, uint32_t maxLength) {
+void Audio::update() {
+    // Desktop FX processing runs inside the SDL audio callback.
+}
+
+void Audio::recordStart(void* buffer, uint32_t maxLength, BitDepth bitDepth) {
     _recBuffer = buffer;
+    _recBitDepth = bitDepth;
     _recMaxLength = maxLength;
     _recOffset = 0;
     _recording = true;
-    memset(_recBuffer, 0, maxLength * sizeof(int16_t));
+    memset(_recBuffer, 0, maxLength * SoundSlotOps::bytesPerSample(bitDepth));
 
     SDL_AudioSpec want = {};
     want.freq = SAMPLE_RATE;
@@ -119,7 +124,16 @@ void Audio::recordUpdate() {
     if (_capDevRate == SAMPLE_RATE) {
         uint32_t remaining = _recMaxLength - _recOffset;
         uint32_t toRead = available < remaining ? available : remaining;
-        SDL_DequeueAudio(_capDev, _recBuffer + _recOffset, toRead * 2);
+        if (_recBitDepth == BIT_DEPTH_16) {
+            SDL_DequeueAudio(_capDev, (int16_t*)_recBuffer + _recOffset, toRead * 2);
+        } else {
+            int16_t tmp[4096];
+            if (toRead > 4096) toRead = 4096;
+            SDL_DequeueAudio(_capDev, tmp, toRead * 2);
+            int8_t* destination = (int8_t*)_recBuffer;
+            for (uint32_t i = 0; i < toRead; i++)
+                destination[_recOffset + i] = (int8_t)(tmp[i] >> 8);
+        }
         _recOffset += toRead;
     } else {
         int16_t tmp[4096];
@@ -135,10 +149,13 @@ void Audio::recordUpdate() {
             double srcPos = i / ratio;
             uint32_t idx = (uint32_t)srcPos;
             double frac = srcPos - idx;
-            if (idx + 1 < toRead)
-                _recBuffer[_recOffset + i] = (int16_t)(tmp[idx] * (1.0 - frac) + tmp[idx + 1] * frac);
+            int16_t sample = idx + 1 < toRead
+                ? (int16_t)(tmp[idx] * (1.0 - frac) + tmp[idx + 1] * frac)
+                : tmp[idx];
+            if (_recBitDepth == BIT_DEPTH_8)
+                ((int8_t*)_recBuffer)[_recOffset + i] = (int8_t)(sample >> 8);
             else
-                _recBuffer[_recOffset + i] = tmp[idx];
+                ((int16_t*)_recBuffer)[_recOffset + i] = sample;
         }
         _recOffset += outCount;
     }
@@ -160,13 +177,11 @@ uint32_t Audio::getRecordedLength() {
     return _recOffset;
 }
 
-void Audio::triggerSound(const int16_t* buffer, uint32_t length, uint32_t sampleRate, uint8_t volume, const SlotFx* fx) {
-    if (!buffer || length == 0) return;
+void Audio::triggerSound(const SoundSlot& slot, uint8_t volume, const SlotFx* fx) {
+    if (!slot.samples || slot.length == 0) return;
     SDL_LockAudioDevice(_playDev);
     Voice& v = _voices[_nextChannel];
-    v.samples = buffer;
-    v.length = length;
-    v.sampleRate = sampleRate;
+    v.slot = slot;
     v.volume = volume;
     v.active = true;
     v.fracPos = 0.0;

@@ -29,7 +29,7 @@ bool Storage::isReady() {
     return _ready;
 }
 
-bool Storage::loadWav(SoundSlot& slot, const char* path) {
+bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth) {
     char fullPath[128];
     if (strncmp(path, "/beepbotdx/", 11) == 0) {
         snprintf(fullPath, sizeof(fullPath), "%s/%s", BASE_DIR, path + 11);
@@ -90,15 +90,16 @@ bool Storage::loadWav(SoundSlot& slot, const char* path) {
 
             double ratio = (sampleRate > SAMPLE_RATE) ? (double)sampleRate / SAMPLE_RATE : 1.0;
             uint32_t outSamples = (uint32_t)(srcSamples / ratio);
-            if (outSamples > MAX_SAMPLE_LENGTH) outSamples = MAX_SAMPLE_LENGTH;
+            uint32_t formatMaximum = MAX_SAMPLE_LENGTH *
+                (targetBitDepth == BIT_DEPTH_8 ? 2 : 1);
+            if (outSamples > formatMaximum) outSamples = formatMaximum;
 
             uint32_t srcNeeded = (uint32_t)(outSamples * ratio) + 2;
             if (srcNeeded > srcSamples) srcNeeded = srcSamples;
 
             bool needsResample = (ratio > 1.0);
 
-            SoundSlotOps::free(slot);
-            if (!SoundSlotOps::allocate(slot, outSamples)) {
+            if (!SoundSlotOps::allocate(slot, outSamples, targetBitDepth)) {
                 fclose(f);
                 return false;
             }
@@ -156,7 +157,7 @@ bool Storage::loadWav(SoundSlot& slot, const char* path) {
                 if (needsResample) {
                     readBuf[i] = (int16_t)sample;
                 } else {
-                    slot.samples[i] = (int16_t)sample;
+                    SoundSlotOps::setSample(slot, i, (int16_t)sample);
                 }
             }
 
@@ -167,7 +168,8 @@ bool Storage::loadWav(SoundSlot& slot, const char* path) {
                     float frac = (float)(srcPos - idx);
                     int16_t s0 = readBuf[idx];
                     int16_t s1 = (idx + 1 < srcNeeded) ? readBuf[idx + 1] : s0;
-                    slot.samples[i] = (int16_t)(s0 + frac * (s1 - s0));
+                    SoundSlotOps::setSample(
+                        slot, i, (int16_t)(s0 + frac * (s1 - s0)));
                 }
                 free(readBuf);
             }
@@ -210,7 +212,8 @@ bool Storage::saveWav(const SoundSlot& slot, const char* path) {
     FILE* f = fopen(fullPath, "wb");
     if (!f) return false;
 
-    uint32_t dataSize = slot.length * sizeof(int16_t);
+    uint8_t bytesPerSample = SoundSlotOps::bytesPerSample(slot.bitDepth);
+    uint32_t dataSize = slot.length * bytesPerSample;
     uint32_t fileSize = 36 + dataSize;
 
     fwrite("RIFF", 1, 4, f);
@@ -221,12 +224,19 @@ bool Storage::saveWav(const SoundSlot& slot, const char* path) {
     uint16_t audioFmt = 1; fwrite(&audioFmt, 2, 1, f);
     uint16_t channels = 1; fwrite(&channels, 2, 1, f);
     uint32_t sr = slot.sampleRate; fwrite(&sr, 4, 1, f);
-    uint32_t byteRate = sr * 2; fwrite(&byteRate, 4, 1, f);
-    uint16_t blockAlign = 2; fwrite(&blockAlign, 2, 1, f);
-    uint16_t bps = 16; fwrite(&bps, 2, 1, f);
+    uint32_t byteRate = sr * bytesPerSample; fwrite(&byteRate, 4, 1, f);
+    uint16_t blockAlign = bytesPerSample; fwrite(&blockAlign, 2, 1, f);
+    uint16_t bps = bytesPerSample * 8; fwrite(&bps, 2, 1, f);
     fwrite("data", 1, 4, f);
     fwrite(&dataSize, 4, 1, f);
-    fwrite(slot.samples, 2, slot.length, f);
+    if (slot.bitDepth == BIT_DEPTH_8) {
+        for (uint32_t i = 0; i < slot.length; i++) {
+            uint8_t sample = (uint8_t)(((const int8_t*)slot.samples)[i] + 128);
+            fwrite(&sample, 1, 1, f);
+        }
+    } else {
+        fwrite(slot.samples, 2, slot.length, f);
+    }
     fclose(f);
 
     return true;
@@ -407,7 +417,8 @@ bool Storage::saveProject(const Project& project, uint8_t slot) {
             const SoundSlot& s = project.sounds[i];
             FILE* f = fopen(path, "wb");
             if (f) {
-                uint32_t dataSize = s.length * sizeof(int16_t);
+                uint8_t bytesPerSample = SoundSlotOps::bytesPerSample(s.bitDepth);
+                uint32_t dataSize = s.length * bytesPerSample;
                 uint32_t fileSize = 36 + dataSize;
                 fwrite("RIFF", 1, 4, f);
                 fwrite(&fileSize, 4, 1, f);
@@ -417,12 +428,19 @@ bool Storage::saveProject(const Project& project, uint8_t slot) {
                 uint16_t audioFmt = 1; fwrite(&audioFmt, 2, 1, f);
                 uint16_t channels = 1; fwrite(&channels, 2, 1, f);
                 uint32_t sr = s.sampleRate; fwrite(&sr, 4, 1, f);
-                uint32_t byteRate = sr * 2; fwrite(&byteRate, 4, 1, f);
-                uint16_t blockAlign = 2; fwrite(&blockAlign, 2, 1, f);
-                uint16_t bps = 16; fwrite(&bps, 2, 1, f);
+                uint32_t byteRate = sr * bytesPerSample; fwrite(&byteRate, 4, 1, f);
+                uint16_t blockAlign = bytesPerSample; fwrite(&blockAlign, 2, 1, f);
+                uint16_t bps = bytesPerSample * 8; fwrite(&bps, 2, 1, f);
                 fwrite("data", 1, 4, f);
                 fwrite(&dataSize, 4, 1, f);
-                fwrite(s.samples, 2, s.length, f);
+                if (s.bitDepth == BIT_DEPTH_8) {
+                    for (uint32_t j = 0; j < s.length; j++) {
+                        uint8_t sample = (uint8_t)(((const int8_t*)s.samples)[j] + 128);
+                        fwrite(&sample, 1, 1, f);
+                    }
+                } else {
+                    fwrite(s.samples, 2, s.length, f);
+                }
                 fclose(f);
             }
         }
@@ -449,6 +467,7 @@ bool Storage::saveProject(const Project& project, uint8_t slot) {
     for (int i = 0; i < NUM_SOUNDS; i++) {
         hdr.soundOccupied[i] = project.sounds[i].occupied ? 1 : 0;
         hdr.soundLevels[i] = project.sounds[i].level;
+        hdr.soundBitDepth[i] = (uint8_t)project.sounds[i].bitDepth;
         if (project.sounds[i].occupied) {
             strncpy(hdr.soundNames[i], project.sounds[i].name, 8);
             hdr.soundNames[i][8] = '\0';
@@ -517,7 +536,9 @@ bool Storage::loadProject(Project& project, uint8_t slot) {
             FILE* wf = fopen(path, "rb");
             if (wf) {
                 fclose(wf);
-                Storage::loadWav(project.sounds[i], path);
+                BitDepth slotDepth = hdr.version >= 4
+                    ? (BitDepth)hdr.soundBitDepth[i] : BIT_DEPTH_16;
+                Storage::loadWav(project.sounds[i], path, slotDepth);
                 SoundSlotOps::setName(project.sounds[i], hdr.soundNames[i]);
                 project.sounds[i].level = hdr.soundLevels[i];
             }
@@ -575,8 +596,7 @@ bool Storage::renderSongToWav(const Project& project, const char* path) {
     fwrite(&dataSize, 4, 1, f);
 
     struct Voice {
-        const int16_t* samples;
-        uint32_t length;
+        const SoundSlot* slot;
         uint32_t srcRate;
         uint8_t level;
         bool active;
@@ -601,8 +621,7 @@ bool Storage::renderSongToWav(const Project& project, const char* path) {
         for (uint8_t s = 0; s < NUM_SOUNDS; s++) {
             if ((triggers & (1 << s)) && project.sounds[s].occupied) {
                 Voice& v = voices[nextVoice];
-                v.samples = project.sounds[s].samples;
-                v.length = project.sounds[s].length;
+                v.slot = &project.sounds[s];
                 v.srcRate = project.sounds[s].sampleRate;
                 v.level = project.sounds[s].level;
                 v.fracPos = 0.0;
@@ -627,16 +646,18 @@ bool Storage::renderSongToWav(const Project& project, const char* path) {
                     step *= FxDsp::pitchRate(voices[v].fx.value[FX_PITCH]);
                 for (uint32_t i = 0; i < toRender; i++) {
                     uint32_t idx = (uint32_t)voices[v].fracPos;
-                    if (idx >= voices[v].length) {
+                    if (idx >= voices[v].slot->length) {
                         voices[v].active = false;
                         break;
                     }
                     double frac = voices[v].fracPos - idx;
                     int16_t s;
-                    if (idx + 1 < voices[v].length)
-                        s = (int16_t)(voices[v].samples[idx] * (1.0 - frac) + voices[v].samples[idx + 1] * frac);
+                    if (idx + 1 < voices[v].slot->length)
+                        s = (int16_t)(
+                            SoundSlotOps::getSample(*voices[v].slot, idx) * (1.0 - frac) +
+                            SoundSlotOps::getSample(*voices[v].slot, idx + 1) * frac);
                     else
-                        s = voices[v].samples[idx];
+                        s = SoundSlotOps::getSample(*voices[v].slot, idx);
                     s = FxDsp::processSample(s, voices[v].fx.value, voices[v].fx.enabled, voices[v].filterState, (float)voices[v].srcRate);
                     int32_t sample = (int32_t)s * voices[v].level / 100;
                     int32_t mixed = (int32_t)chunk[i] + sample;

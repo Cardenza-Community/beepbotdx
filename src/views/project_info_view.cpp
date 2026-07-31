@@ -6,8 +6,7 @@
 #include "config.h"
 #include <cstdio>
 
-// static const uint8_t NUM_SETTINGS = 2;  // TODO: restore when bit depth is implemented
-static const uint8_t NUM_SETTINGS = 1;
+static const uint8_t NUM_SETTINGS = 2;
 static const uint8_t TOTAL_ROWS = NUM_SETTINGS + 1 + NUM_SOUNDS;
 
 ProjectInfoView::ProjectInfoView(Project& project, Character& character)
@@ -39,6 +38,10 @@ void ProjectInfoView::update(InputEvent event) {
                 if (GlobalSettings::instance->ledMode != LED_OFF) {
                     uint8_t r, g, b; ThemeOps::getPresetRGB(_project.themeIndex, r, g, b); LED::setColor(r, g, b);
                 }
+            } else if (_cursor == 1) {
+                _project.bitDepth = _project.bitDepth == BIT_DEPTH_16
+                    ? BIT_DEPTH_8 : BIT_DEPTH_16;
+                _project.dirty = true;
             }
             break;
         case INPUT_RIGHT:
@@ -49,6 +52,10 @@ void ProjectInfoView::update(InputEvent event) {
                 if (GlobalSettings::instance->ledMode != LED_OFF) {
                     uint8_t r, g, b; ThemeOps::getPresetRGB(_project.themeIndex, r, g, b); LED::setColor(r, g, b);
                 }
+            } else if (_cursor == 1) {
+                _project.bitDepth = _project.bitDepth == BIT_DEPTH_16
+                    ? BIT_DEPTH_8 : BIT_DEPTH_16;
+                _project.dirty = true;
             }
             break;
         case INPUT_BACK:
@@ -80,13 +87,13 @@ void ProjectInfoView::draw(Canvas& canvas) {
         scrollOffset = _cursor - visibleItems + 1;
     }
 
-    uint8_t bytesPerSample = (_project.bitDepth == BIT_DEPTH_8) ? 1 : 2;
+    uint8_t bytesPerSample = SoundSlotOps::bytesPerSample(_project.bitDepth);
     uint32_t available = Memory::getFree();
     float availSecs = (float)available / (SAMPLE_RATE * bytesPerSample);
     uint32_t usedBytes = 0;
     for (int i = 0; i < NUM_SOUNDS; i++) {
         if (_project.sounds[i].occupied)
-            usedBytes += _project.sounds[i].length * bytesPerSample;
+            usedBytes += SoundSlotOps::allocatedBytes(_project.sounds[i]);
     }
 
     char buf[40];
@@ -96,8 +103,10 @@ void ProjectInfoView::draw(Canvas& canvas) {
         bool selected = (i == _cursor);
 
         if (i < NUM_SETTINGS) {
-            const char* label = "COLOR";
-            const char* value = ThemeOps::getPresetName(_project.themeIndex);
+            const char* label = i == 0 ? "COLOR" : "NEW SAMPLES";
+            const char* value = i == 0
+                ? ThemeOps::getPresetName(_project.themeIndex)
+                : (_project.bitDepth == BIT_DEPTH_8 ? "8-BIT" : "16-BIT");
 
             canvas.setTextColor(selected ? TFT_WHITE : theme.accent);
             canvas.drawString(label, labelX, y);
@@ -118,12 +127,13 @@ void ProjectInfoView::draw(Canvas& canvas) {
             int slot = i - NUM_SETTINGS - 1;
             if (_project.sounds[slot].occupied) {
                 float secs = (float)_project.sounds[slot].length / SAMPLE_RATE;
-                uint32_t kb = (_project.sounds[slot].length * bytesPerSample) / 1024;
+                uint32_t kb = SoundSlotOps::allocatedBytes(_project.sounds[slot]) / 1024;
                 canvas.setTextColor(selected ? TFT_WHITE : theme.accent);
                 snprintf(buf, sizeof(buf), "%d. %-8s", slot + 1, _project.sounds[slot].name);
                 canvas.drawString(buf, labelX, y);
                 canvas.setTextColor(selected ? TFT_WHITE : theme.dim);
-                snprintf(buf, sizeof(buf), "%.2fs", secs);
+                snprintf(buf, sizeof(buf), "%.2fs %db", secs,
+                    _project.sounds[slot].bitDepth == BIT_DEPTH_8 ? 8 : 16);
                 canvas.drawString(buf, 120, y);
                 snprintf(buf, sizeof(buf), "%luKB", (unsigned long)kb);
                 canvas.drawString(buf, 180, y);

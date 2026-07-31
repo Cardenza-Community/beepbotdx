@@ -7,7 +7,7 @@
 #define SAMPLE_ARENA_BYTES (8 * 1024 * 1024)
 #else
 #define MAX_SAMPLE_LENGTH 32000   // 2.0s at 16kHz
-#define SAMPLE_ARENA_BYTES (112 * 1024)  // Shared pool; leaves runtime heap headroom
+#define SAMPLE_ARENA_BYTES (160 * 1024)  // 5.0s shared sample pool at 16-bit
 #endif
 #define NUM_VOICES 8
 #define SPEAKER_VOLUME 200

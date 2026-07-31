@@ -13,12 +13,13 @@
 #include <cstring>
 #include <cmath>
 
-static uint8_t computeAudioLevel(const int16_t* samples, uint32_t totalLength) {
-    if (!samples || totalLength == 0) return 0;
+static uint8_t computeAudioLevel(const SoundSlot& slot, uint32_t totalLength) {
+    if (!slot.samples || totalLength == 0) return 0;
     uint32_t scanStart = (totalLength > 1600) ? totalLength - 1600 : 0;
     int16_t peak = 0;
     for (uint32_t i = scanStart; i < totalLength; i++) {
-        int16_t val = samples[i] < 0 ? -samples[i] : samples[i];
+        int16_t sample = SoundSlotOps::getSample(slot, i);
+        int16_t val = sample < 0 ? -sample : sample;
         if (val > peak) peak = val;
     }
     return (uint8_t)(peak >> 7);
@@ -296,7 +297,14 @@ void SoundView::updateTrim(InputEvent event) {
             _trimMovingEnd = !_trimMovingEnd;
             break;
         case INPUT_SPACE:
-            Audio::triggerSound(slot.samples + _trimStart, _trimEnd - _trimStart, slot.sampleRate, slot.level * 255 / 100);
+            {
+                SoundSlot trimmed = slot;
+                trimmed.samples = reinterpret_cast<int16_t*>(
+                    reinterpret_cast<uint8_t*>(slot.samples) +
+                    _trimStart * SoundSlotOps::bytesPerSample(slot.bitDepth));
+                trimmed.length = _trimEnd - _trimStart;
+                Audio::triggerSound(trimmed, slot.level * 255 / 100);
+            }
             _playbackStart = millis();
             _playbackLength = _trimEnd - _trimStart;
             _playbackRate = slot.sampleRate;
@@ -365,8 +373,7 @@ void SoundView::updateFx(InputEvent event) {
             _project.dirty = true;
             break;
         case INPUT_SPACE:
-            Audio::triggerSound(slot.samples, slot.length, slot.sampleRate,
-                               slot.level * 255 / 100, &slot.fx);
+            Audio::triggerSound(slot, slot.level * 255 / 100, &slot.fx);
             _character.setState(CHAR_BEAT);
             break;
         case INPUT_BACK:
@@ -407,7 +414,8 @@ void SoundView::updateLoadBrowser(InputEvent event) {
             SoundSlotOps::free(_previewSlot);
             char path[64];
             snprintf(path, sizeof(path), "/beepbotdx/samples/%s", _wavFiles[_fileCursor]);
-            if (Storage::loadWav(_project.sounds[_cursor], path)) {
+            if (Storage::loadWav(
+                    _project.sounds[_cursor], path, _project.bitDepth)) {
                 _project.dirty = true;
                 snprintf(_statusMsg, sizeof(_statusMsg), "OK: %s", path);
                 _character.setState(CHAR_SUCCESS);
@@ -426,8 +434,8 @@ void SoundView::updateLoadBrowser(InputEvent event) {
             snprintf(path, sizeof(path), "/beepbotdx/samples/%s", _wavFiles[_fileCursor]);
             Audio::stopAll();
             SoundSlotOps::free(_previewSlot);
-            if (Storage::loadWav(_previewSlot, path)) {
-                Audio::triggerSound(_previewSlot.samples, _previewSlot.length, _previewSlot.sampleRate);
+            if (Storage::loadWav(_previewSlot, path, _project.bitDepth)) {
+                Audio::triggerSound(_previewSlot);
                 _character.setState(CHAR_IDLE);
             }
             break;
@@ -607,7 +615,7 @@ void SoundView::drawRecording(Canvas& canvas, const Theme& theme) {
     const int startY = 24;
     SoundSlot& slot = _project.sounds[_cursor];
     uint32_t recorded = Audio::getRecordedLength();
-    uint8_t level = computeAudioLevel(slot.samples, recorded);
+    uint8_t level = computeAudioLevel(slot, recorded);
 
     float progress = _recordMaxLength > 0 ? (float)recorded / _recordMaxLength : 0.0f;
     if (progress > 1.0f) progress = 1.0f;
@@ -977,7 +985,7 @@ void SoundView::drawWaveform(Canvas& canvas, const Theme& theme, int x, int y, i
     int16_t peak = 0;
     for (int px = 0; px < w; px += 2) {
         uint32_t sampleIdx = (uint32_t)((float)px / w * slot.length);
-        int16_t val = abs(slot.samples[sampleIdx]);
+        int16_t val = abs(SoundSlotOps::getSample(slot, sampleIdx));
         if (val > peak) peak = val;
     }
     const int16_t minPeak = 4000;
@@ -986,7 +994,7 @@ void SoundView::drawWaveform(Canvas& canvas, const Theme& theme, int x, int y, i
     float levelScale = slot.level / 100.0f;
     for (int px = 0; px < w; px += 2) {
         uint32_t sampleIdx = (uint32_t)((float)px / w * slot.length);
-        int16_t sampleVal = slot.samples[sampleIdx];
+        int16_t sampleVal = SoundSlotOps::getSample(slot, sampleIdx);
         int barH = (int)((float)abs(sampleVal) / peak * (h / 2) * levelScale);
         if (barH < 1) barH = 1;
 
@@ -1018,17 +1026,19 @@ void SoundView::drawWaveform(Canvas& canvas, const Theme& theme, int x, int y, i
 void SoundView::startRecording() {
     SoundSlot& slot = _project.sounds[_cursor];
     Audio::stopAll();
-    _recordMaxLength = SoundSlotOps::availableSamples(&slot);
-    if (_recordMaxLength > MAX_SAMPLE_LENGTH) _recordMaxLength = MAX_SAMPLE_LENGTH;
+    _recordMaxLength = SoundSlotOps::availableSamples(_project.bitDepth, &slot);
+    uint32_t formatMaximum = MAX_SAMPLE_LENGTH *
+        (_project.bitDepth == BIT_DEPTH_8 ? 2 : 1);
+    if (_recordMaxLength > formatMaximum) _recordMaxLength = formatMaximum;
     if (_recordMaxLength < SAMPLE_RATE / 10 ||
-        !SoundSlotOps::allocate(slot, _recordMaxLength)) {
+        !SoundSlotOps::allocate(slot, _recordMaxLength, _project.bitDepth)) {
         _character.setState(CHAR_DEAD);
         _character.say("no memory!");
         snprintf(_statusMsg, sizeof(_statusMsg), "NO MEMORY");
         _statusTime = millis();
         return;
     }
-    Audio::recordStart(slot.samples, _recordMaxLength);
+    Audio::recordStart(slot.samples, _recordMaxLength, slot.bitDepth);
     BloomFieldOps::reset(_bloom);
     BloomFieldOps::inject(_bloom, 80, 0.0f);
     BloomFieldOps::step(_bloom);
@@ -1069,7 +1079,10 @@ void SoundView::applyTrim() {
     uint32_t newLen = _trimEnd - _trimStart;
 
     if (_trimStart > 0 && newLen > 0) {
-        memmove(slot.samples, slot.samples + _trimStart, newLen * sizeof(int16_t));
+        uint8_t bytes = SoundSlotOps::bytesPerSample(slot.bitDepth);
+        memmove(slot.samples,
+                reinterpret_cast<uint8_t*>(slot.samples) + _trimStart * bytes,
+                newLen * bytes);
     }
 
     slot.length = newLen;
@@ -1092,7 +1105,7 @@ void SoundView::triggerSlot(uint8_t index) {
         _character.say("empty");
         return;
     }
-    Audio::triggerSound(slot.samples, slot.length, slot.sampleRate, slot.level * 255 / 100, &slot.fx);
+    Audio::triggerSound(slot, slot.level * 255 / 100, &slot.fx);
     _character.setState(CHAR_BEAT);
     _flashSlot = index;
     _flashTime = millis();

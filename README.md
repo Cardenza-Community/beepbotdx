@@ -13,7 +13,7 @@ Record sounds with the built-in mic, import WAV files from SD, build patterns, a
 ## Features
 
 - **8 projects** with color themes and renameable slots
-- **8 sound slots** — record hands-free, push-to-record, or import WAV from SD (16kHz mono, 2s max, trimmable)
+- **8 sound slots** — record hands-free, push-to-record, or import WAV from SD (16kHz mono, mixed 8/16-bit, trimmable)
 - **Per-slot FX** — pitch shift, bitcrush, low-pass and high-pass filters
 - **16-step sequencer** — 16 patterns, 8 tracks, 8-voice polyphony, copy/paste patterns
 - **Song mode** — chain up to 16 patterns
@@ -21,7 +21,7 @@ Record sounds with the built-in mic, import WAV files from SD, build patterns, a
 - **60-240 BPM** per-project tempo with LED sync (StampS3A)
 - **WAV export** — render full song to file on SD
 - **`\(^_^)/`** —  beepb0t reacts to your actions and provides feedback
-- **Settings** — auto-save, LED mode, confirm delete, boot to project/list
+- **Settings** — per-project format for new samples, color themes, auto-save, LED mode, confirm delete, boot to project/list
 
 ## Workflow
 
