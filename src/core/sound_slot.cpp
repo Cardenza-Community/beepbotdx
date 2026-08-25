@@ -162,7 +162,7 @@ uint32_t SoundSlotOps::allocatedBytes(const SoundSlot& slot) {
 
 int16_t SoundSlotOps::getSample(const SoundSlot& slot, uint32_t index) {
     if (slot.bitDepth == BIT_DEPTH_8) {
-        return (int16_t)((const int8_t*)slot.samples)[index] << 8;
+        return (int16_t)((const int8_t*)slot.samples)[index] * 256;
     }
     return slot.samples[index];
 }

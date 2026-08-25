@@ -173,6 +173,9 @@ void Audio::triggerSound(const SoundSlot& slot, uint8_t volume, const SlotFx* fx
         // A third persistent buffer ensures the first replacement chunk
         // cannot overwrite either buffer still owned by the speaker task.
         queueFxChunk(_nextChannel, true);
+        // Fill both speaker queue slots now. Waiting for the next UI frame can
+        // exceed a 16 ms chunk and cause an audible gap at startup.
+        queueFxChunk(_nextChannel);
     } else {
         _fxVoices[_nextChannel].active = false;
         if (slot.bitDepth == BIT_DEPTH_8) {

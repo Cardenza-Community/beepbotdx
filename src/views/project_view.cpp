@@ -51,9 +51,14 @@ void ProjectView::update(InputEvent event) {
     if (_confirming) {
         switch (event) {
             case INPUT_ENTER:
-                Storage::saveProject(_project, _currentSlot);
-                _confirming = false;
-                doSwitch();
+                if (Storage::saveProject(_project, _currentSlot)) {
+                    _project.dirty = false;
+                    _confirming = false;
+                    doSwitch();
+                } else {
+                    _character.setState(CHAR_ERROR);
+                    _character.say("save failed");
+                }
                 break;
             case INPUT_BACK:
                 _confirming = false;

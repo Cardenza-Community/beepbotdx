@@ -8,12 +8,73 @@
 #include <cstring>
 #include <cstdio>
 #include <cstddef>
+#include <cmath>
 
 #ifndef NATIVE_TEST
 #include <esp_heap_caps.h>
 #endif
 
 static bool _sdReady = false;
+
+static bool supportedWavFormat(uint16_t format, uint16_t channels,
+                               uint16_t bitsPerSample, uint32_t sampleRate) {
+    if ((channels != 1 && channels != 2) || sampleRate == 0) return false;
+    if (format == 1) {
+        return bitsPerSample == 8 || bitsPerSample == 16 ||
+               bitsPerSample == 24 || bitsPerSample == 32;
+    }
+    return format == 3 && bitsPerSample == 32;
+}
+
+static bool readWavValue(File& file, uint16_t format, uint16_t bitsPerSample,
+                         int32_t& sample) {
+    if (format == 1 && bitsPerSample == 8) {
+        uint8_t value;
+        if (file.read(&value, 1) != 1) return false;
+        sample = ((int32_t)value - 128) * 256;
+    } else if (format == 1 && bitsPerSample == 16) {
+        int16_t value;
+        if (file.read((uint8_t*)&value, 2) != 2) return false;
+        sample = value;
+    } else if (format == 1 && bitsPerSample == 24) {
+        uint8_t bytes[3];
+        if (file.read(bytes, 3) != 3) return false;
+        int32_t value = (int32_t)((uint32_t)bytes[0] |
+            ((uint32_t)bytes[1] << 8) | ((uint32_t)bytes[2] << 16));
+        if (value & 0x00800000) value |= (int32_t)0xFF000000;
+        sample = value >> 8;
+    } else if (format == 1 && bitsPerSample == 32) {
+        int32_t value;
+        if (file.read((uint8_t*)&value, 4) != 4) return false;
+        sample = value >> 16;
+    } else if (format == 3 && bitsPerSample == 32) {
+        float value;
+        if (file.read((uint8_t*)&value, 4) != 4) return false;
+        if (!std::isfinite(value)) return false;
+        if (value > 1.0f) value = 1.0f;
+        if (value < -1.0f) value = -1.0f;
+        sample = (int32_t)(value * 32767.0f);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+static bool readWavFrame(File& file, uint16_t format, uint16_t bitsPerSample,
+                         uint16_t channels, int16_t& output) {
+    int32_t left;
+    if (!readWavValue(file, format, bitsPerSample, left)) return false;
+    int64_t mixed = left;
+    if (channels == 2) {
+        int32_t right;
+        if (!readWavValue(file, format, bitsPerSample, right)) return false;
+        mixed = ((int64_t)left + right) / 2;
+    }
+    if (mixed > 32767) mixed = 32767;
+    if (mixed < -32768) mixed = -32768;
+    output = (int16_t)mixed;
+    return true;
+}
 
 bool Storage::init() {
     SPI.begin(SD_SPI_CLK, SD_SPI_MISO, SD_SPI_MOSI, SD_SPI_CS);
@@ -68,6 +129,10 @@ bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth
 
         if (memcmp(chunkId, "fmt ", 4) == 0) {
             size_t fmtStart = file.position();
+            if (chunkSize < 16) {
+                file.close();
+                return false;
+            }
             file.read((uint8_t*)&audioFormat, 2);
             file.read((uint8_t*)&numChannels, 2);
             file.read((uint8_t*)&sampleRate, 4);
@@ -82,7 +147,7 @@ bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth
                           audioFormat, numChannels, sampleRate, bitsPerSample);
 
             // Seek past any extra fmt bytes
-            file.seek(fmtStart + chunkSize);
+            file.seek(fmtStart + chunkSize + (chunkSize & 1));
 
         } else if (memcmp(chunkId, "data", 4) == 0) {
             if (!fmtFound) {
@@ -91,9 +156,10 @@ bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth
                 return false;
             }
 
-            // Accept PCM (1) or IEEE float (3)
-            if (audioFormat != 1 && audioFormat != 3) {
-                Serial.printf("[wav] unsupported format: %u\n", audioFormat);
+            if (!supportedWavFormat(audioFormat, numChannels,
+                                    bitsPerSample, sampleRate)) {
+                Serial.printf("[wav] unsupported: fmt=%u ch=%u rate=%u bits=%u\n",
+                              audioFormat, numChannels, sampleRate, bitsPerSample);
                 file.close();
                 return false;
             }
@@ -108,9 +174,6 @@ bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth
                 (targetBitDepth == BIT_DEPTH_8 ? 2 : 1);
             if (outSamples > formatMaximum) outSamples = formatMaximum;
 
-            uint32_t srcNeeded = (uint32_t)(outSamples * ratio) + 2;
-            if (srcNeeded > srcSamples) srcNeeded = srcSamples;
-
             Serial.printf("[wav] %u src @ %uHz -> %u out @ %uHz\n", srcSamples, sampleRate, outSamples, SAMPLE_RATE);
 
             if (!SoundSlotOps::allocate(slot, outSamples, targetBitDepth)) {
@@ -119,100 +182,56 @@ bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth
                 return false;
             }
 
-            // Read source samples into a temp buffer for resampling
-            // If no resampling needed, read directly into slot
-            int16_t* readBuf = nullptr;
             bool needsResample = (ratio > 1.0);
-            if (needsResample) {
-                readBuf = (int16_t*)malloc(srcNeeded * sizeof(int16_t));
-                if (!readBuf) {
-                    Serial.println("[wav] resample buf alloc failed");
+            if (!needsResample) {
+                for (uint32_t i = 0; i < outSamples; i++) {
+                    int16_t sample;
+                    if (!readWavFrame(file, audioFormat, bitsPerSample,
+                                      numChannels, sample)) {
+                        SoundSlotOps::free(slot);
+                        file.close();
+                        return false;
+                    }
+                    SoundSlotOps::setSample(slot, i, sample);
+                }
+            } else if (outSamples > 0) {
+                // Linear resampling needs only the two source frames around the
+                // current output position, keeping import memory constant.
+                int16_t first;
+                int16_t second;
+                if (!readWavFrame(file, audioFormat, bitsPerSample,
+                                  numChannels, first)) {
                     SoundSlotOps::free(slot);
                     file.close();
                     return false;
                 }
-            }
-
-            uint32_t samplesToRead = needsResample ? srcNeeded : outSamples;
-            for (uint32_t i = 0; i < samplesToRead; i++) {
-                int32_t sample = 0;
-
-                if (audioFormat == 1 && bitsPerSample == 8) {
-                    uint8_t s;
-                    file.read(&s, 1);
-                    sample = ((int16_t)s - 128) << 8;
-                    if (numChannels == 2) {
-                        uint8_t r;
-                        file.read(&r, 1);
-                        sample = (sample + (((int16_t)r - 128) << 8)) / 2;
-                    }
-                } else if (audioFormat == 1 && bitsPerSample == 16) {
-                    int16_t s;
-                    file.read((uint8_t*)&s, 2);
-                    sample = s;
-                    if (numChannels == 2) {
-                        int16_t r;
-                        file.read((uint8_t*)&r, 2);
-                        sample = (sample + r) / 2;
-                    }
-                } else if (audioFormat == 1 && bitsPerSample == 24) {
-                    uint8_t b[3];
-                    file.read(b, 3);
-                    sample = (int32_t)((b[2] << 24) | (b[1] << 16) | (b[0] << 8)) >> 8;
-                    sample >>= 8;
-                    if (numChannels == 2) {
-                        file.read(b, 3);
-                        int32_t r = (int32_t)((b[2] << 24) | (b[1] << 16) | (b[0] << 8)) >> 8;
-                        r >>= 8;
-                        sample = (sample + r) / 2;
-                    }
-                } else if (audioFormat == 1 && bitsPerSample == 32) {
-                    int32_t s;
-                    file.read((uint8_t*)&s, 4);
-                    sample = s >> 16;
-                    if (numChannels == 2) {
-                        int32_t r;
-                        file.read((uint8_t*)&r, 4);
-                        sample = (sample + (r >> 16)) / 2;
-                    }
-                } else if (audioFormat == 3 && bitsPerSample == 32) {
-                    float f;
-                    file.read((uint8_t*)&f, 4);
-                    sample = (int32_t)(f * 32767.0f);
-                    if (numChannels == 2) {
-                        float fr;
-                        file.read((uint8_t*)&fr, 4);
-                        sample = (sample + (int32_t)(fr * 32767.0f)) / 2;
-                    }
-                } else {
-                    Serial.printf("[wav] unsupported: fmt=%u bits=%u\n", audioFormat, bitsPerSample);
-                    if (readBuf) free(readBuf);
+                second = first;
+                uint32_t baseIndex = 0;
+                if (srcSamples > 1 &&
+                    !readWavFrame(file, audioFormat, bitsPerSample,
+                                  numChannels, second)) {
                     SoundSlotOps::free(slot);
                     file.close();
                     return false;
                 }
-
-                if (sample > 32767) sample = 32767;
-                if (sample < -32768) sample = -32768;
-
-                if (needsResample) {
-                    readBuf[i] = (int16_t)sample;
-                } else {
-                    SoundSlotOps::setSample(slot, i, (int16_t)sample);
-                }
-            }
-
-            if (needsResample) {
                 for (uint32_t i = 0; i < outSamples; i++) {
                     double srcPos = i * ratio;
                     uint32_t idx = (uint32_t)srcPos;
+                    while (baseIndex < idx) {
+                        first = second;
+                        baseIndex++;
+                        if (baseIndex + 1 < srcSamples &&
+                            !readWavFrame(file, audioFormat, bitsPerSample,
+                                          numChannels, second)) {
+                            SoundSlotOps::free(slot);
+                            file.close();
+                            return false;
+                        }
+                    }
                     float frac = (float)(srcPos - idx);
-                    int16_t s0 = readBuf[idx];
-                    int16_t s1 = (idx + 1 < srcNeeded) ? readBuf[idx + 1] : s0;
                     SoundSlotOps::setSample(
-                        slot, i, (int16_t)(s0 + frac * (s1 - s0)));
+                        slot, i, (int16_t)(first + frac * (second - first)));
                 }
-                free(readBuf);
             }
 
             slot.length = outSamples;
@@ -235,7 +254,7 @@ bool Storage::loadWav(SoundSlot& slot, const char* path, BitDepth targetBitDepth
             return true;
         } else {
             // Skip unknown chunk
-            file.seek(file.position() + chunkSize);
+            file.seek(file.position() + chunkSize + (chunkSize & 1));
         }
     }
 
@@ -257,40 +276,48 @@ bool Storage::saveWav(const SoundSlot& slot, const char* path) {
     uint32_t dataSize = slot.length * bytesPerSample;
     uint32_t fileSize = 36 + dataSize;
 
+    bool written = true;
+    auto writeExact = [&](const void* data, size_t size) {
+        if (written && file.write((const uint8_t*)data, size) != size) {
+            written = false;
+        }
+    };
+
     // RIFF header
-    file.write((const uint8_t*)"RIFF", 4);
-    file.write((const uint8_t*)&fileSize, 4);
-    file.write((const uint8_t*)"WAVE", 4);
+    writeExact("RIFF", 4);
+    writeExact(&fileSize, 4);
+    writeExact("WAVE", 4);
 
     // fmt chunk
-    file.write((const uint8_t*)"fmt ", 4);
+    writeExact("fmt ", 4);
     uint32_t fmtSize = 16;
-    file.write((const uint8_t*)&fmtSize, 4);
+    writeExact(&fmtSize, 4);
     uint16_t audioFormat = 1;
-    file.write((const uint8_t*)&audioFormat, 2);
+    writeExact(&audioFormat, 2);
     uint16_t numChannels = 1;
-    file.write((const uint8_t*)&numChannels, 2);
-    file.write((const uint8_t*)&slot.sampleRate, 4);
+    writeExact(&numChannels, 2);
+    writeExact(&slot.sampleRate, 4);
     uint32_t byteRate = slot.sampleRate * bytesPerSample;
-    file.write((const uint8_t*)&byteRate, 4);
+    writeExact(&byteRate, 4);
     uint16_t blockAlign = bytesPerSample;
-    file.write((const uint8_t*)&blockAlign, 2);
+    writeExact(&blockAlign, 2);
     uint16_t bitsPerSample = bytesPerSample * 8;
-    file.write((const uint8_t*)&bitsPerSample, 2);
+    writeExact(&bitsPerSample, 2);
 
     // data chunk
-    file.write((const uint8_t*)"data", 4);
-    file.write((const uint8_t*)&dataSize, 4);
+    writeExact("data", 4);
+    writeExact(&dataSize, 4);
     if (slot.bitDepth == BIT_DEPTH_8) {
         for (uint32_t i = 0; i < slot.length; i++) {
             uint8_t sample = (uint8_t)(((const int8_t*)slot.samples)[i] + 128);
-            file.write(&sample, 1);
+            writeExact(&sample, 1);
         }
     } else {
-        file.write((const uint8_t*)slot.samples, dataSize);
+        writeExact(slot.samples, dataSize);
     }
 
     file.close();
+    if (!written) return false;
     Serial.printf("[wav] saved: %s (%u samples)\n", path, slot.length);
     return true;
 }
@@ -395,9 +422,9 @@ bool Storage::saveProjectTheme(uint8_t slot, uint8_t themeIndex) {
     hdr.version = PROJECT_VERSION;
     file = SD.open(path, FILE_WRITE);
     if (!file) return false;
-    file.write((const uint8_t*)&hdr, sizeof(hdr));
+    bool written = file.write((const uint8_t*)&hdr, sizeof(hdr)) == sizeof(hdr);
     file.close();
-    return true;
+    return written;
 }
 
 bool Storage::saveProjectName(uint8_t slot, const char* name) {
@@ -414,9 +441,9 @@ bool Storage::saveProjectName(uint8_t slot, const char* name) {
     hdr.version = PROJECT_VERSION;
     file = SD.open(path, FILE_WRITE);
     if (!file) return false;
-    file.write((const uint8_t*)&hdr, sizeof(hdr));
+    bool written = file.write((const uint8_t*)&hdr, sizeof(hdr)) == sizeof(hdr);
     file.close();
-    return true;
+    return written;
 }
 
 uint16_t Storage::loadProjectBpm(uint8_t slot) {
@@ -458,7 +485,7 @@ bool Storage::saveProject(const Project& project, uint8_t slot) {
         if (project.sounds[i].occupied) {
             char path[64];
             snprintf(path, sizeof(path), "%s/s%d.wav", dir, i);
-            saveWav(project.sounds[i], path);
+            if (!saveWav(project.sounds[i], path)) return false;
         }
     }
 
@@ -496,7 +523,10 @@ bool Storage::saveProject(const Project& project, uint8_t slot) {
         hdr.fxEnabled[i] = bits;
     }
 
-    file.write((const uint8_t*)&hdr, sizeof(hdr));
+    if (file.write((const uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) {
+        file.close();
+        return false;
+    }
     file.close();
 
     Serial.printf("[project] saved to slot %d\n", slot + 1);

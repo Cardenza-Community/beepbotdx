@@ -79,6 +79,15 @@ void test_8bit_samples_use_half_space_and_round_trip() {
     TEST_ASSERT_EQUAL_INT16(-16384, SoundSlotOps::getSample(slots[0], 1));
 }
 
+void test_8bit_extremes_expand_without_overflow() {
+    TEST_ASSERT_TRUE(SoundSlotOps::allocate(slots[0], 2, BIT_DEPTH_8));
+    ((int8_t*)slots[0].samples)[0] = -128;
+    ((int8_t*)slots[0].samples)[1] = 127;
+
+    TEST_ASSERT_EQUAL_INT16(-32768, SoundSlotOps::getSample(slots[0], 0));
+    TEST_ASSERT_EQUAL_INT16(32512, SoundSlotOps::getSample(slots[0], 1));
+}
+
 void test_16bit_allocation_after_odd_8bit_sample_is_aligned() {
     TEST_ASSERT_TRUE(SoundSlotOps::allocate(slots[0], 1, BIT_DEPTH_8));
     TEST_ASSERT_TRUE(SoundSlotOps::allocate(slots[1], 1, BIT_DEPTH_16));
@@ -109,6 +118,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_failed_replacement_preserves_existing_sample);
     RUN_TEST(test_available_samples_includes_replaced_slot);
     RUN_TEST(test_8bit_samples_use_half_space_and_round_trip);
+    RUN_TEST(test_8bit_extremes_expand_without_overflow);
     RUN_TEST(test_16bit_allocation_after_odd_8bit_sample_is_aligned);
     RUN_TEST(test_shrinking_8bit_slot_compacts_mixed_format_data);
     return UNITY_END();
