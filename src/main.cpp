@@ -1,3 +1,7 @@
+#ifdef CARDENZA_TARGET
+#include "cardenza/cardenza_hal.h"
+#include "cardenza/cardenza_m5_audio.h"
+#endif
 #include <M5Cardputer.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
@@ -119,7 +123,33 @@ static void showBootScreen(uint16_t accentColor) {
 
 void setup() {
     auto cfg = M5.config();
+#ifdef CARDENZA_TARGET
+    Serial.begin(115200);
+    delay(200); // Allow USB CDC to reconnect before diagnostic output.
+    Serial.println("[Cardenza] startup; probing ES8156");
+    const bool cardenzaCodecReady = cardenza_hal_init(32, 16);
+    Serial.printf("[Cardenza] codec %s; starting display/keyboard\n",cardenzaCodecReady?"ready":"FAILED");
+    cfg.fallback_board = m5::board_t::board_M5Cardputer;
+    cfg.internal_imu = false;
+#endif
     M5Cardputer.begin(cfg);
+#ifdef CARDENZA_TARGET
+    Serial.printf("[Cardenza] ES8156 %s; I2S16/32fs; no gyro/battery/WS2812; heap=%u\n",
+                  cardenzaCodecReady ? "ready" : "FAILED", ESP.getFreeHeap());
+    // Feed both ES8156 output channels. playRaw(false) mono input is duplicated by M5Unified.
+    M5Cardputer.Speaker.end();
+    auto cardenzaSpeaker = M5Cardputer.Speaker.config();
+    cardenzaSpeaker.stereo = true;
+    M5Cardputer.Speaker.config(cardenzaSpeaker);
+    if (!cardenzaCodecReady) {
+        M5Cardputer.Display.fillScreen(TFT_BLACK);
+        M5Cardputer.Display.setTextColor(TFT_RED);
+        M5Cardputer.Display.setCursor(4, 4);
+        M5Cardputer.Display.println("ES8156 INIT FAILED");
+        while (true) delay(100);
+    }
+#endif
+
 
     esp_wifi_stop();
     esp_wifi_deinit();
@@ -162,6 +192,10 @@ void setup() {
     app.getSettings().confirmDelete = confirmDel;
     app.getSettings().bootToProject = bootProj;
     app.getSettings().shakeGen = shakeGen;
+#ifdef CARDENZA_TARGET
+    app.getSettings().ledMode = LED_OFF;
+    app.getSettings().shakeGen = false;
+#endif
     if (bootProj) {
         app.openProjectList(lastSlot);
     } else {

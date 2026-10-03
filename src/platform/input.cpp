@@ -56,8 +56,12 @@ static InputEvent arrowToEvent(char key) {
 }
 
 void Input::init() {
+#ifdef CARDENZA_TARGET
+    imuReady = false;
+#else
     M5.Imu.begin();
     imuReady = M5.Imu.isEnabled();
+#endif
 }
 
 char Input::getChar() {

@@ -161,12 +161,13 @@ void Audio::recordUpdate() {
     }
 }
 
-void Audio::recordStop() {
+bool Audio::recordStop() {
     _recording = false;
     if (_capDev) {
         SDL_CloseAudioDevice(_capDev);
         _capDev = 0;
     }
+    return true;
 }
 
 bool Audio::isRecording() {

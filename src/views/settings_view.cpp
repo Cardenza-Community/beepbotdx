@@ -27,6 +27,9 @@ void SettingsView::update(InputEvent event) {
         case INPUT_LEFT:
         case INPUT_RIGHT:
         case INPUT_ENTER:
+#ifdef CARDENZA_TARGET
+            if (_cursor == 1 || _cursor == 4) break;
+#endif
             if (_cursor == 0) {
                 _settings.autoSave = !_settings.autoSave;
                 _character.say(_settings.autoSave ? "on" : "off");
@@ -83,17 +86,24 @@ void SettingsView::draw(Canvas& canvas) {
     values[2] = _settings.confirmDelete ? "ON" : "OFF";
     values[3] = _settings.bootToProject ? "PROJ LIST" : "LAST PROJ";
     values[4] = _settings.shakeGen ? "ON" : "OFF";
+#ifdef CARDENZA_TARGET
+    values[1] = values[4] = "N/A";
+#endif
 
     for (uint8_t i = 0; i < NUM_ITEMS; i++) {
         int y = startY + i * itemH;
 
-        canvas.setTextColor(i == _cursor ? TFT_WHITE : theme.accent);
+        bool available = true;
+#ifdef CARDENZA_TARGET
+        available = i != 1 && i != 4;
+#endif
+        canvas.setTextColor(!available ? theme.dim : i == _cursor ? TFT_WHITE : theme.accent);
         canvas.setTextDatum(top_left);
         canvas.drawString(labels[i], labelX, y);
 
-        canvas.setTextColor(i == _cursor ? TFT_WHITE : theme.dim);
+        canvas.setTextColor(available && i == _cursor ? TFT_WHITE : theme.dim);
         canvas.setTextDatum(top_left);
-        if (i == _cursor) {
+        if (available && i == _cursor) {
             char buf[20];
             snprintf(buf, sizeof(buf), "< %s >", values[i]);
             canvas.drawString(buf, valueX - 12, y);

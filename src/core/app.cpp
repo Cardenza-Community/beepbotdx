@@ -105,7 +105,7 @@ void App::tick() {
     _character.tick();
     Audio::update();
 
-    if (!_lowBattery && Power::getBatteryPercent() <= 10) {
+    if (Power::hasBattery() && !_lowBattery && Power::getBatteryPercent() <= 10) {
         _lowBattery = true;
         LED::setColor(255, 0, 0);
     }
@@ -254,6 +254,7 @@ void App::handleGlobalInput(InputEvent& event) {
     }
 
     // M key cycles LED mode
+#ifndef CARDENZA_TARGET
     if (event == INPUT_CHAR && Input::getChar() == 'm'
         && _currentScreen != SCREEN_SETTINGS) {
         _settings.ledMode = (LedMode)((_settings.ledMode + 1) % 3);
@@ -271,6 +272,7 @@ void App::handleGlobalInput(InputEvent& event) {
         return;
     }
 
+#endif
     // E key exports song to WAV
     if (event == INPUT_CHAR && Input::getChar() == 'e'
         && (_currentScreen == SCREEN_SONG || _currentScreen == SCREEN_PLAY)) {
@@ -555,11 +557,13 @@ void App::drawHeader(Canvas& canvas, const Theme& theme) {
         canvas.drawString(msg, hdrLeft + hdrContentW / 2 + faceW / 2 + 4, 7);
     }
 
+    if (Power::hasBattery()) {
     // Battery (right)
     char batStr[6];
     snprintf(batStr, sizeof(batStr), "%d%%", Power::getBatteryPercent());
     canvas.setTextDatum(top_right);
     canvas.drawString(batStr, hdrLeft + hdrContentW - 4, 7);
+    }
 }
 
 struct HelpLine { const char* key; const char* action; };
@@ -597,7 +601,11 @@ void App::drawHelp(Canvas& canvas, const Theme& theme) {
         {"SPACE", "Play/stop"}, {"1-8", "Audition"}, {"E", "Export wav"},
     };
     static const HelpLine globals[] = {
-        {"S", "Save proj"}, {"O", "Open proj"}, {"G", "Settings"}, {"M", "LED mode"}, {"F", "Table flip"},
+        {"S", "Save proj"}, {"O", "Open proj"}, {"G", "Settings"},
+#ifndef CARDENZA_TARGET
+        {"M", "LED mode"},
+#endif
+        {"F", "Table flip"},
         {"+/-", "Volume"}, {"B +/-", "BPM"}, {"N +/-", "Brightness"}, {"TAB", "Navigate"}, {"TAB ^/v ", "Menu"},
     };
 

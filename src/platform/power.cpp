@@ -6,6 +6,9 @@ static uint8_t cachedPercent = 0;
 static bool initialized = false;
 
 uint8_t Power::getBatteryPercent() {
+#ifdef CARDENZA_TARGET
+    return UINT8_MAX; // unavailable; callers must check hasBattery().
+#else
     uint32_t now = millis();
     if (!initialized || now - lastReadTime >= 2000) {
         uint8_t raw = M5.Power.getBatteryLevel();
@@ -18,4 +21,5 @@ uint8_t Power::getBatteryPercent() {
         lastReadTime = now;
     }
     return cachedPercent;
+#endif
 }

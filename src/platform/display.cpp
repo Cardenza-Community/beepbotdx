@@ -1,3 +1,6 @@
+#ifdef CARDENZA_TARGET
+#include "cardenza/cardenza_m5_audio.h"
+#endif
 #include <M5Cardputer.h>
 #include "display.h"
 #include "config.h"
@@ -9,6 +12,9 @@ void Display::init() {
     M5Cardputer.Display.fillScreen(TFT_BLACK);
 
     _ready = _canvas.create(SCREEN_WIDTH, SCREEN_HEIGHT);
+#ifdef CARDENZA_TARGET
+    cardenza_m5_require(_ready,"Display memory FAILED");
+#endif
 }
 
 void Display::beginFrame() {

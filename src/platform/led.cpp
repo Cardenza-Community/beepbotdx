@@ -1,4 +1,11 @@
 #include "led.h"
+#ifdef CARDENZA_TARGET
+#include "cardenza/cardenza_hal.h"
+void LED::init() { cardenza_hal_led_off(); }
+void LED::setColor(uint8_t, uint8_t, uint8_t) {}
+void LED::off() {}
+#else
+#include "led.h"
 #include <Arduino.h>
 #include <FastLED.h>
 
@@ -26,3 +33,5 @@ void LED::off() {
     leds[0] = CRGB::Black;
     FastLED.show();
 }
+
+#endif
