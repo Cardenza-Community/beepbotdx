@@ -1,0 +1,43 @@
+name: Cardenza build
+on:
+  push:
+    branches: [main, nightly]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cardenza-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  cardenza:
+    if: github.repository == 'Cardenza-Community/beepbotdx'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    env:
+      PLATFORMIO_CORE_DIR: /tmp/203-launcher-pio
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build and check Cardenza support
+        shell: bash
+        run: |
+          python -m pip install platformio==6.2.0
+          python -m platformio run -e cardenza -j4
+          python tests/cardenza_nvs_guard.py
+      - name: Prepare app-only image and licensing notices
+        run: python3 .github/launcher/prepare.py .pio/build/cardenza/firmware.bin .pio/libdeps/cardenza/M5Cardputer/src/M5Cardputer.h
+      - name: Files for the author to attach to a Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cardenza
+          include-hidden-files: true
+          path: |
+            .git/launcher-output/Cardenza.bin
+            .git/launcher-output/NOTICES.txt

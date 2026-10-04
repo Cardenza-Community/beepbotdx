@@ -1,0 +1,35 @@
+# The author publishes the Release and its assets. This hook only notifies Launcher.
+name: 203 Launcher CI
+on:
+  release:
+    types: [published]
+permissions: {}
+jobs:
+  publish:
+    if: github.repository == 'Cardenza-Community/beepbotdx'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Import the author's published Release
+        env:
+          APP_ID: ${{ vars.LAUNCHER_APP_ID }}
+          TARGET: cardenza
+          ASSET: Cardenza.bin
+          NOTICES: NOTICES.txt
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TYPE: ${{ github.event.release.prerelease && 'nightly' || 'release' }}
+          APP_TOKEN: ${{ secrets.LAUNCHER_APP_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${APP_ID:?Configure the registered App ID}"
+          : "${APP_TOKEN:?Configure the scoped App Token}"
+          jq -n --arg app_id "$APP_ID" --arg target "$TARGET" --arg asset "$ASSET" \
+            --arg notices "$NOTICES" --arg tag "$RELEASE_TAG" --arg release_type "$RELEASE_TYPE" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{app_id:$app_id,target:$target,asset:$asset,notices:$notices,tag:$tag,release_type:$release_type,repository:$repository}' > request.json
+          # Do not follow redirects or send GitHub/cloud credentials.
+          curl --fail-with-body --max-time 180 --retry 2 'https://launcher-api.203.io/publish' \
+            -H "Authorization: Bearer $APP_TOKEN" -H 'Content-Type: application/json' \
+            --data-binary @request.json -o response.json
+          jq -e '.status == "published" or .status == "unchanged"' response.json > /dev/null
+          jq '{status,version,channel,cleanup_pending}' response.json
