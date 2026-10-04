@@ -1039,6 +1039,12 @@ void SoundView::startRecording() {
         return;
     }
     Audio::recordStart(slot.samples, _recordMaxLength, slot.bitDepth);
+    if (!Audio::isRecording()) {
+        _character.say("mic failed");
+        snprintf(_statusMsg,sizeof(_statusMsg),"MIC INIT FAILED");
+        _statusTime=millis();
+        return;
+    }
     BloomFieldOps::reset(_bloom);
     BloomFieldOps::inject(_bloom, 80, 0.0f);
     BloomFieldOps::step(_bloom);
@@ -1049,7 +1055,7 @@ void SoundView::startRecording() {
 }
 
 void SoundView::stopRecording() {
-    Audio::recordStop();
+    const bool audioReady = Audio::recordStop();
     SoundSlot& slot = _project.sounds[_cursor];
     slot.length = Audio::getRecordedLength();
     slot.occupied = (slot.length > 0);
@@ -1063,12 +1069,12 @@ void SoundView::stopRecording() {
 
         _subState = STATE_RECORD_DONE;
         _recordDoneTime = millis();
-        _character.setState(CHAR_SUCCESS);
-        _character.say("got it!");
+        _character.setState(audioReady ? CHAR_SUCCESS : CHAR_ERROR);
+        _character.say(audioReady ? "got it!" : "AUDIO INIT FAILED");
     } else {
         SoundSlotOps::free(slot);
         _character.setState(CHAR_ERROR);
-        _character.say("nothing?");
+        _character.say(audioReady ? "nothing?" : "AUDIO INIT FAILED");
         _subState = STATE_LIST;
     }
 }

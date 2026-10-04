@@ -1,3 +1,4 @@
+#include "platform/board.h"
 #include "app.h"
 #include "platform/storage.h"
 #include "platform/audio.h"
@@ -105,7 +106,7 @@ void App::tick() {
     _character.tick();
     Audio::update();
 
-    if (!_lowBattery && Power::getBatteryPercent() <= 10) {
+    if (Power::hasBattery() && !_lowBattery && Power::getBatteryPercent() <= 10) {
         _lowBattery = true;
         LED::setColor(255, 0, 0);
     }
@@ -254,7 +255,7 @@ void App::handleGlobalInput(InputEvent& event) {
     }
 
     // M key cycles LED mode
-    if (event == INPUT_CHAR && Input::getChar() == 'm'
+    if (!Board::isCardenza() && event == INPUT_CHAR && Input::getChar() == 'm'
         && _currentScreen != SCREEN_SETTINGS) {
         _settings.ledMode = (LedMode)((_settings.ledMode + 1) % 3);
         const char* names[] = {"led on", "led metro", "led off"};
@@ -555,11 +556,13 @@ void App::drawHeader(Canvas& canvas, const Theme& theme) {
         canvas.drawString(msg, hdrLeft + hdrContentW / 2 + faceW / 2 + 4, 7);
     }
 
+    if (Power::hasBattery()) {
     // Battery (right)
     char batStr[6];
     snprintf(batStr, sizeof(batStr), "%d%%", Power::getBatteryPercent());
     canvas.setTextDatum(top_right);
     canvas.drawString(batStr, hdrLeft + hdrContentW - 4, 7);
+    }
 }
 
 struct HelpLine { const char* key; const char* action; };
@@ -597,7 +600,9 @@ void App::drawHelp(Canvas& canvas, const Theme& theme) {
         {"SPACE", "Play/stop"}, {"1-8", "Audition"}, {"E", "Export wav"},
     };
     static const HelpLine globals[] = {
-        {"S", "Save proj"}, {"O", "Open proj"}, {"G", "Settings"}, {"M", "LED mode"}, {"F", "Table flip"},
+        {"S", "Save proj"}, {"O", "Open proj"}, {"G", "Settings"},
+        {"M", "LED mode"},
+        {"F", "Table flip"},
         {"+/-", "Volume"}, {"B +/-", "BPM"}, {"N +/-", "Brightness"}, {"TAB", "Navigate"}, {"TAB ^/v ", "Menu"},
     };
 
@@ -635,7 +640,7 @@ void App::drawHelp(Canvas& canvas, const Theme& theme) {
     if (showGlobals) {
         globalStart = allCount;
         const int globalCount = sizeof(globals) / sizeof(globals[0]);
-        for (int i = 0; i < globalCount; i++) allItems[allCount++] = &globals[i];
+        for (int i = 0; i < globalCount; i++) if (!Board::isCardenza() || globals[i].key[0] != 'M') allItems[allCount++] = &globals[i];
     }
     _helpTotal = allCount;
 

@@ -56,8 +56,7 @@ static InputEvent arrowToEvent(char key) {
 }
 
 void Input::init() {
-    M5.Imu.begin();
-    imuReady = M5.Imu.isEnabled();
+    imuReady = !M5.isCardenza() && M5.Imu.begin() && M5.Imu.isEnabled();
 }
 
 char Input::getChar() {

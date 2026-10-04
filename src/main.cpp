@@ -1,3 +1,4 @@
+#include "cardenza/cardenza_m5_audio.h"
 #include <M5Cardputer.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
@@ -119,7 +120,13 @@ static void showBootScreen(uint16_t accentColor) {
 
 void setup() {
     auto cfg = M5.config();
+    Serial.begin(115200);
     M5Cardputer.begin(cfg);
+    if (M5.isCardenza()) {
+        Serial.printf("[Cardenza] runtime ES8156 %s; heap=%u\n", M5.cardenzaCodecReady()?"ready":"FAILED", ESP.getFreeHeap());
+        cardenza_m5_require(M5.cardenzaCodecReady(), "ES8156 INIT FAILED");
+    }
+
 
     esp_wifi_stop();
     esp_wifi_deinit();
@@ -162,6 +169,10 @@ void setup() {
     app.getSettings().confirmDelete = confirmDel;
     app.getSettings().bootToProject = bootProj;
     app.getSettings().shakeGen = shakeGen;
+    if (M5.isCardenza()) {
+    app.getSettings().ledMode = LED_OFF;
+    app.getSettings().shakeGen = false;
+    }
     if (bootProj) {
         app.openProjectList(lastSlot);
     } else {

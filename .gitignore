@@ -36,3 +36,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# Local Cardenza build outputs
+.pio/
+*.log

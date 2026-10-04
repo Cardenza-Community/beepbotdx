@@ -12,7 +12,7 @@ void update();
 
 void recordStart(void* buffer, uint32_t maxLength, BitDepth bitDepth);
 void recordUpdate();
-void recordStop();
+bool recordStop(); // Capture remains in the slot even if speaker resume fails.
 bool isRecording();
 uint32_t getRecordedLength();
 

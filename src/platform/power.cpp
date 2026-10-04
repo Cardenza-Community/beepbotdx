@@ -6,6 +6,7 @@ static uint8_t cachedPercent = 0;
 static bool initialized = false;
 
 uint8_t Power::getBatteryPercent() {
+    if (M5.isCardenza()) return UINT8_MAX;
     uint32_t now = millis();
     if (!initialized || now - lastReadTime >= 2000) {
         uint8_t raw = M5.Power.getBatteryLevel();

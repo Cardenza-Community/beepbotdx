@@ -1,5 +1,6 @@
 #include <M5Cardputer.h>
 #include "audio.h"
+#include "cardenza/cardenza_m5_audio.h"
 #include "config.h"
 #include "core/slot_fx.h"
 #include "core/fx_dsp.h"
@@ -68,11 +69,12 @@ static bool queueFxChunk(uint8_t channel, bool stopCurrent = false) {
 }
 
 void Audio::init() {
-    M5Cardputer.Speaker.begin();
+    cardenza_m5_require(M5Cardputer.Speaker.begin(),"Speaker init FAILED");
     M5Cardputer.Speaker.setVolume(_volume);
 }
 
 void Audio::update() {
+    if (_recording) return;
     for (uint8_t channel = 0; channel < NUM_VOICES; channel++) {
         FxVoice& voice = _fxVoices[channel];
         while (voice.active && M5Cardputer.Speaker.isPlaying(channel) < 2) {
@@ -104,7 +106,13 @@ void Audio::recordStart(void* buffer, uint32_t maxLength, BitDepth bitDepth) {
     micCfg.dma_buf_len = 256;
     micCfg.dma_buf_count = 8;
     M5Cardputer.Mic.config(micCfg);
-    M5Cardputer.Mic.begin();
+    if (!M5Cardputer.Mic.begin()) {
+        _recording=false;
+        M5Cardputer.Mic.end();
+        M5Cardputer.Speaker.begin();
+        Serial.println("[Cardenza] PDM microphone init FAILED");
+        return;
+    }
     delay(200);
 
     // Prime the double-buffer — first call queues but data isn't valid yet
@@ -138,15 +146,19 @@ void Audio::recordUpdate() {
     }
 }
 
-void Audio::recordStop() {
+bool Audio::recordStop() {
     _recording = false;
     delay(100);
     M5Cardputer.Mic.end();
     delay(100);
 
-    M5Cardputer.Speaker.begin();
+    if (!M5Cardputer.Speaker.begin()) {
+        Serial.println("[Cardenza] Speaker resume FAILED; recording retained");
+        return false;
+    }
     M5Cardputer.Speaker.setVolume(SPEAKER_VOLUME);
     delay(100);
+    return true;
 }
 
 bool Audio::isRecording() {
@@ -158,7 +170,7 @@ uint32_t Audio::getRecordedLength() {
 }
 
 void Audio::triggerSound(const SoundSlot& slot, uint8_t volume, const SlotFx* fx) {
-    if (!slot.samples || slot.length == 0) return;
+    if (_recording || !slot.samples || slot.length == 0) return;
     M5Cardputer.Speaker.setChannelVolume(_nextChannel, volume);
 
     if (fx && FxDsp::hasActiveFx(*fx)) {
